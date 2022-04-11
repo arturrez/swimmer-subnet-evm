@@ -2296,7 +2296,7 @@ func TestTxAllowListSuccessfulTx(t *testing.T) {
 	}
 	genesis.Config.TxAllowListConfig = precompile.TxAllowListConfig{
 		AllowListConfig: precompile.AllowListConfig{
-			BlockTimestamp:  big.NewInt(time.Now().Unix()),
+			BlockTimestamp:  big.NewInt(0),
 			AllowListAdmins: testEthAddrs[0:1],
 		},
 	}
@@ -2319,13 +2319,13 @@ func TestTxAllowListSuccessfulTx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	role := precompile.GetTxAllowListStatus(genesisState, testEthAddrs[0])
+	role := precompile.GetTxAllowListStatus(genesisState, testEthAddrs[1])
 	if role != precompile.AllowListNoRole {
 		t.Fatalf("Expected allow list status to be set to no role: %s, but found: %s", precompile.AllowListNoRole, role)
 	}
 
-	// Send basic transaction to construct a simple block and confirm that the precompile state configuration in the worker behaves correctly.
-	tx := types.NewTransaction(uint64(0), testEthAddrs[0], new(big.Int).Mul(firstTxAmount, big.NewInt(4)), 21000, big.NewInt(testMinGasPrice*3), nil)
+	// Send basic whitelisted tx.
+	tx := types.NewTransaction(uint64(1), testEthAddrs[0], new(big.Int).Mul(firstTxAmount, big.NewInt(3)), 21000, big.NewInt(testMinGasPrice*3), nil)
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(vm.chainConfig.ChainID), testKeys[0])
 	assert.NoError(t, err)
 
@@ -2334,7 +2334,8 @@ func TestTxAllowListSuccessfulTx(t *testing.T) {
 		t.Fatalf("Failed to add tx at index: %s", err)
 	}
 
-	tx2 := types.NewTransaction(uint64(0), testEthAddrs[1], new(big.Int).Mul(firstTxAmount, big.NewInt(4)), 21000, big.NewInt(testMinGasPrice*3), nil)
+	// Send non-whitelisted tx, should be rejected.
+	tx2 := types.NewTransaction(uint64(0), testEthAddrs[1], new(big.Int).Mul(firstTxAmount, big.NewInt(5)), 21000, big.NewInt(testMinGasPrice*3), nil)
 	signedTx2, err := types.SignTx(tx2, types.NewEIP155Signer(vm.chainConfig.ChainID), testKeys[1])
 	if err != nil {
 		t.Fatal(err)
@@ -2345,7 +2346,7 @@ func TestTxAllowListSuccessfulTx(t *testing.T) {
 		t.Fatal("Tx not rejected at index")
 	}
 
-	<-issuer // I'm ready to make a block
+	<-issuer
 
 	blk, err := vm.BuildBlock()
 	if err != nil {
@@ -2373,6 +2374,16 @@ func TestTxAllowListSuccessfulTx(t *testing.T) {
 		t.Fatalf("Expected new block to match")
 	}
 
+	// Verify that the allow list config activation was handled correctly in the first block.
+	blkState, err := vm.chain.BlockState(blk.(*chain.BlockWrapper).Block.(*Block).ethBlock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	role = precompile.GetTxAllowListStatus(blkState, testEthAddrs[0])
+	if role != precompile.AllowListAdmin {
+		t.Fatalf("Expected allow list status to be set to Admin: %s, but found: %s", precompile.AllowListAdmin, role)
+	}
+
 	block := blk.(*chain.BlockWrapper).Block.(*Block).ethBlock
 
 	txs := block.Transactions()
@@ -2381,6 +2392,6 @@ func TestTxAllowListSuccessfulTx(t *testing.T) {
 		t.Fatalf("Expected number of txs to be %d, but found %d", 1, txs.Len())
 	}
 
-	assert.Equal(t, tx.Hash(), txs[0].Hash())
+	assert.Equal(t, signedTx.Hash(), txs[0].Hash())
 
 }
