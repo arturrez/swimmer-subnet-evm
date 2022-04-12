@@ -1,3 +1,6 @@
+# Swimmer subnet EVM
+Swimmer Network is a dedicated blockchain for gaming.
+
 # Subnet EVM
 
 [Avalanche](https://docs.avax.network/learn/platform-overview) is a network composed of multiple blockchains.
