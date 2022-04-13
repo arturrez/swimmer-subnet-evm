@@ -53,6 +53,9 @@ type ChainHeaderReader interface {
 
 	// GetHeaderByHash retrieves a block header from the database by its hash.
 	GetHeaderByHash(hash common.Hash) *types.Header
+
+	// StateAt returns a new mutable state based on a particular point in time.
+	StateAt(root common.Hash) (*state.StateDB, error)
 }
 
 // ChainReader defines a small collection of methods needed to access the local

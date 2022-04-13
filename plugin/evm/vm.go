@@ -24,6 +24,7 @@ import (
 	"github.com/ava-labs/subnet-evm/params"
 	"github.com/ava-labs/subnet-evm/peer"
 	"github.com/ava-labs/subnet-evm/plugin/evm/message"
+	"github.com/ava-labs/subnet-evm/predeploy"
 
 	// Force-load tracer engine to trigger registration
 	//
@@ -251,12 +252,54 @@ func (vm *VM) Initialize(
 		return err
 	}
 
+	log.Info("Initialize", "Genesis", g)
+
 	if g.Config == nil {
 		g.Config = params.SubnetEVMDefaultChainConfig
 	}
 
 	if g.Config.FeeConfig == nil {
 		g.Config.FeeConfig = params.DefaultFeeConfig
+	}
+
+	if g.Config.SwimmerPhase0Timestamp.Cmp(new(big.Int).SetUint64(0)) == 0 {
+		if g.Config.SwimmerConfig == nil {
+			return fmt.Errorf("swimmer config must be set in swimmer phase 0")
+		}
+		predeploy := predeploy.NewPredeployContract()
+		alloc := core.GenesisAlloc{
+			g.Config.SwimmerConfig.InitNativeAccount: core.GenesisAccount{
+				Balance: g.Config.SwimmerConfig.InitNativeAmount,
+			},
+			predeploy.ContractConsensusAddress: core.GenesisAccount{
+				Balance: big.NewInt(0),
+				Code:    predeploy.TransparentUpgradeableProxyByteCode,
+				Storage: map[common.Hash]common.Hash{
+					predeploy.AdminProxyStorageSlot:   common.BytesToHash(common.LeftPadBytes(g.Config.SwimmerConfig.ProxyAdmin[:], 32)[:]),
+					predeploy.LogicAddressStorageSlot: common.BytesToHash(common.LeftPadBytes(predeploy.ContractDefaultLogicAddress[:], 32)[:]),
+					predeploy.GasLimitStorageSlot:     common.BigToHash(g.Config.SwimmerConfig.GasLimit),
+					predeploy.GasPriceStorageSlot:     common.BigToHash(g.Config.SwimmerConfig.GasPrice),
+					predeploy.RewardPoolStorageSlot:   common.BytesToHash(common.LeftPadBytes(g.Config.SwimmerConfig.PoolReward[:], 32)[:]),
+				},
+			},
+			predeploy.ContractAccessControlAddress: core.GenesisAccount{
+				Balance: big.NewInt(0),
+				Code:    predeploy.TransparentUpgradeableProxyByteCode,
+				Storage: map[common.Hash]common.Hash{
+					predeploy.AdminProxyStorageSlot:   common.BytesToHash(common.LeftPadBytes(g.Config.SwimmerConfig.ProxyAdmin[:], 32)[:]),
+					predeploy.LogicAddressStorageSlot: common.BytesToHash(common.LeftPadBytes(predeploy.ContractDefaultLogicAddress[:], 32)[:]),
+				},
+			},
+			predeploy.ContractDefaultLogicAddress: core.GenesisAccount{
+				Balance: big.NewInt(0),
+				Code:    predeploy.DefaultLogicByteCode,
+			},
+		}
+		g.Alloc = alloc
+	}
+
+	if g.Config.SwimmerConfig == nil {
+		g.Config.SwimmerConfig = params.DefaultSwimmerConfig
 	}
 
 	ethConfig := ethconfig.NewDefaultConfig()
@@ -654,6 +697,10 @@ func (vm *VM) currentRules() params.Rules {
 // getBlockValidator returns the block validator that should be used for a block that
 // follows the ruleset defined by [rules]
 func (vm *VM) getBlockValidator(rules params.Rules) BlockValidator {
+	if rules.IsSwimmerPhase0 {
+		return swimmerPhase0BlockValidator
+	}
+
 	if rules.IsSubnetEVM {
 		return subnetEVMBlockValidator
 	}
