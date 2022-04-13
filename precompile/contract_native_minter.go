@@ -10,6 +10,7 @@ import (
 
 	"github.com/ava-labs/subnet-evm/vmerrs"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 var (
@@ -17,11 +18,14 @@ var (
 	// Singleton StatefulPrecompiledContract for minting native assets by permissioned callers.
 	ContractNativeMinterPrecompile StatefulPrecompiledContract = createNativeMinterPrecompile(ContractNativeMinterAddress)
 
-	mintSignature = CalculateFunctionSelector("mintNativeCoin(address,uint256)") // address, amount
+	mintSignature        = CalculateFunctionSelector("mintNativeCoin(address,uint256)") // address, amount
+	totalSupplySignature = CalculateFunctionSelector("totalSupply()")
 
 	ErrCannotMint = errors.New("non-enabled cannot mint")
 
 	mintInputLen = common.HashLength + common.HashLength
+
+	TOTAL_SUPPLY_HASH = crypto.Keccak256Hash([]byte(`TOTAL_SUPPLY_HASH`))
 )
 
 // ContractNativeMinterConfig wraps [AllowListConfig] and uses it to implement the StatefulPrecompileConfig
@@ -78,6 +82,10 @@ func UnpackMintInput(input []byte) (common.Address, *big.Int, error) {
 	return to, assetAmount, nil
 }
 
+func PackTotalSupplyInput() []byte {
+	return totalSupplySignature
+}
+
 // createMintNativeCoin checks if the caller is permissioned for minting operation.
 // The execution function parses the [input] into native coin amount and receiver address.
 func createMintNativeCoin(accessibleState PrecompileAccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
@@ -107,8 +115,45 @@ func createMintNativeCoin(accessibleState PrecompileAccessibleState, caller comm
 	}
 
 	stateDB.AddBalance(to, amount)
+
+	// Add total supply
+	addTotalSupply(stateDB, ContractNativeMinterAddress, amount)
+
 	// Return an empty output and the remaining gas
 	return []byte{}, remainingGas, nil
+}
+
+// Get total supply
+func GetTotalSupply(state StateDB, precompileAddr common.Address) *big.Int {
+	totalSupply := getTotalSupply(state, precompileAddr).Big()
+	return totalSupply
+}
+func getTotalSupply(state StateDB, precompileAddr common.Address) common.Hash {
+	return state.GetState(precompileAddr, TOTAL_SUPPLY_HASH)
+}
+
+// Set totalSupply
+func addTotalSupply(state StateDB, precompileAddr common.Address, amount *big.Int) {
+	currentBalance := getTotalSupply(state, precompileAddr).Big()
+	newTotalSupply := big.NewInt(0).Add(currentBalance, amount)
+	state.SetState(precompileAddr, TOTAL_SUPPLY_HASH, common.BigToHash(newTotalSupply))
+}
+func createTotalSupply(precompileAddr common.Address) RunStatefulPrecompileFunc {
+	return func(evm PrecompileAccessibleState, callerAddr common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
+		if remainingGas, err = deductGas(suppliedGas, ReadAllowListGasCost); err != nil {
+			return nil, 0, err
+		}
+
+		if len(input) != 0 {
+			return nil, remainingGas, fmt.Errorf("invalid input length for read total supply: %d", len(input))
+		}
+
+		totalSupply := GetTotalSupply(evm.GetStateDB(), precompileAddr)
+
+		result := make([]byte, 32)
+
+		return totalSupply.FillBytes(result), remainingGas, nil
+	}
 }
 
 // createNativeMinterPrecompile returns a StatefulPrecompiledContract with R/W control of an allow list at [precompileAddr] and a native coin minter.
@@ -120,7 +165,9 @@ func createNativeMinterPrecompile(precompileAddr common.Address) StatefulPrecomp
 
 	mint := newStatefulPrecompileFunction(mintSignature, createMintNativeCoin)
 
+	totalSupplyFunc := newStatefulPrecompileFunction(totalSupplySignature, createTotalSupply(precompileAddr))
+
 	// Construct the contract with no fallback function.
-	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{setAdmin, setEnabled, setNone, read, mint})
+	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{setAdmin, setEnabled, setNone, read, mint, totalSupplyFunc})
 	return contract
 }
