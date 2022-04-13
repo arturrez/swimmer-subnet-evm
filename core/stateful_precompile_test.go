@@ -315,7 +315,7 @@ func TestContractNativeMinterRun(t *testing.T) {
 			caller:         adminAddr,
 			precompileAddr: precompile.ContractNativeMinterAddress,
 			input: func() []byte {
-				input, err := precompile.PackMintInput(adminAddr, common.Big1)
+				input, err := precompile.PackMintInput(adminAddr, common.Big2)
 				if err != nil {
 					panic(err)
 				}
@@ -328,7 +328,10 @@ func TestContractNativeMinterRun(t *testing.T) {
 				res := precompile.GetContractNativeMinterStatus(state, adminAddr)
 				assert.Equal(t, precompile.AllowListAdmin, res)
 
-				assert.Equal(t, common.Big1, state.GetBalance(adminAddr), "expected minted funds")
+				assert.Equal(t, common.Big2, state.GetBalance(adminAddr), "expected minted funds")
+
+				supply := precompile.GetTotalSupply(state, precompile.ContractNativeMinterAddress)
+				assert.Equal(t, supply, common.Big2)
 			},
 		},
 		"mint max big funds": {
