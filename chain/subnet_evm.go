@@ -211,3 +211,7 @@ func (self *ETHChain) GetTxAcceptedSubmitCh() <-chan core.NewTxsEvent {
 func (self *ETHChain) GetTxPool() *core.TxPool {
 	return self.backend.TxPool()
 }
+
+func (self *ETHChain) SetEtherbase(coinbase common.Address) {
+	self.backend.SetEtherbase(coinbase)
+}

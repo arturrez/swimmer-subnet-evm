@@ -329,8 +329,19 @@ func (vm *VM) Initialize(
 		}
 	}
 
-	// Handle custom fee recipient
 	ethConfig.Miner.Etherbase = constants.BlackholeAddr
+	if g.Config.SwimmerPhase0Timestamp.Cmp(new(big.Int).SetUint64(0)) == 0 {
+		if g.Config.AllowFeeRecipients {
+			return errors.New("allow fee recipient is invalid on swimmer blockchain")
+		}
+		// validator address only use for view, don't receive block reward.
+		if common.IsHexAddress(vm.config.ValidatorAddress) {
+			log.Info("Validator address was specified", "validatorAddress", common.HexToAddress(vm.config.ValidatorAddress))
+			ethConfig.Miner.Etherbase = common.HexToAddress(vm.config.ValidatorAddress)
+		}
+	}
+
+	// Handle custom fee recipient
 	switch {
 	case common.IsHexAddress(vm.config.FeeRecipient):
 		if g.Config.AllowFeeRecipients {
