@@ -87,6 +87,7 @@ cat <<EOF > /tmp/genesis.json
     "istanbulBlock": 0,
     "muirGlacierBlock": 0,
     "subnetEVMTimestamp": 0,
+    "swimmerPhase0Timestamp": 0,
     "feeConfig": {
       "gasLimit": 20000000,
       "minBaseFee": 1000000000,
@@ -96,6 +97,14 @@ cat <<EOF > /tmp/genesis.json
       "maxBlockGasCost": 10000000,
       "targetBlockRate": 2,
       "blockGasCostStep": 500000
+    },
+    "contractNativeMinterConfig": {
+      "blockTimestamp": 0,
+      "adminAddresses":["${GENESIS_ADDRESS}"]
+    },
+    "contractDeployerAllowListConfig": {
+      "blockTimestamp": 0,
+      "adminAddresses":["${GENESIS_ADDRESS}"]
     }
   },
   "alloc": {

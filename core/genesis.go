@@ -315,6 +315,10 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 			head.BaseFee = g.Config.GetFeeConfig().MinBaseFee
 		}
 	}
+	// <<Swimmer VM>>
+	if g.Config != nil && g.Config.IsSwimmerPhase0(common.Big0) {
+		head.BaseFee = nil
+	}
 	statedb.Commit(false)
 	if err := statedb.Database().TrieDB().Commit(root, true, nil); err != nil {
 		panic(fmt.Sprintf("unable to commit genesis block: %v", err))

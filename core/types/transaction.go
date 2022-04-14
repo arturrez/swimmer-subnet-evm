@@ -297,6 +297,12 @@ func (tx *Transaction) To() *common.Address {
 	return copyAddressPtr(tx.inner.to())
 }
 
+// <<Swimmer VM>> Cost with gasPrice returns gas * gasPrice
+func (tx *Transaction) CostWithoutValue(gasPrice *big.Int) *big.Int {
+	total := new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(tx.Gas()))
+	return total
+}
+
 // Cost returns gas * gasPrice + value.
 func (tx *Transaction) Cost() *big.Int {
 	total := new(big.Int).Mul(tx.GasPrice(), new(big.Int).SetUint64(tx.Gas()))
@@ -509,6 +515,84 @@ func (s *TxByPriceAndTime) Pop() interface{} {
 	x := old[n-1]
 	*s = old[0 : n-1]
 	return x
+}
+
+// <<Swimmer VM>>
+type TxByTime []*TxWithMinerFee
+
+func (s TxByTime) Len() int { return len(s) }
+func (s TxByTime) Less(i, j int) bool {
+	// Using the time the transaction was first seen for
+	// deterministic sorting
+	return s[i].Tx.time.Before(s[j].Tx.time)
+}
+func (s TxByTime) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+
+func (s *TxByTime) Push(x interface{}) {
+	*s = append(*s, x.(*TxWithMinerFee))
+}
+
+func (s *TxByTime) Pop() interface{} {
+	old := *s
+	n := len(old)
+	x := old[n-1]
+	*s = old[0 : n-1]
+	return x
+}
+
+type TransactionsByTimeAndNonce struct {
+	txs     map[common.Address]Transactions
+	heads   TxByTime
+	signer  Signer
+	baseFee *big.Int
+}
+
+func NewTransactionsByTimeAndNonce(signer Signer, txs map[common.Address]Transactions, baseFee *big.Int) *TransactionsByTimeAndNonce {
+	// Initialize a price and received time based heap with the head transactions
+	heads := make(TxByTime, 0, len(txs))
+	for from, accTxs := range txs {
+		acc, _ := Sender(signer, accTxs[0])
+		wrapped, err := NewTxWithMinerFee(accTxs[0], baseFee)
+		// Remove transaction if sender doesn't match from, or if wrapping fails.
+		if acc != from || err != nil {
+			delete(txs, from)
+			continue
+		}
+		heads = append(heads, wrapped)
+		txs[from] = accTxs[1:]
+	}
+	heap.Init(&heads)
+
+	// Assemble and return the transaction set
+	return &TransactionsByTimeAndNonce{
+		txs:     txs,
+		heads:   heads,
+		signer:  signer,
+		baseFee: baseFee,
+	}
+}
+
+func (t *TransactionsByTimeAndNonce) Peek() *Transaction {
+	if len(t.heads) == 0 {
+		return nil
+	}
+	return t.heads[0].Tx
+}
+
+func (t *TransactionsByTimeAndNonce) Shift() {
+	acc, _ := Sender(t.signer, t.heads[0].Tx)
+	if txs, ok := t.txs[acc]; ok && len(txs) > 0 {
+		if wrapped, err := NewTxWithMinerFee(txs[0], t.baseFee); err == nil {
+			t.heads[0], t.txs[acc] = wrapped, txs[1:]
+			heap.Fix(&t.heads, 0)
+			return
+		}
+	}
+	heap.Pop(&t.heads)
+}
+
+func (t *TransactionsByTimeAndNonce) Pop() {
+	heap.Pop(&t.heads)
 }
 
 // TransactionsByPriceAndNonce represents a set of transactions that can return

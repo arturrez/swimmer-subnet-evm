@@ -102,6 +102,9 @@ type Backend interface {
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
 	LastAcceptedBlock() *types.Block
+
+	// <<Swimmer VM>>
+	GetFixedGasPrice() *big.Int
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {

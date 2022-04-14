@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/subnet-evm/core/state"
 	"github.com/ava-labs/subnet-evm/core/types"
 	"github.com/ava-labs/subnet-evm/params"
+	"github.com/ava-labs/subnet-evm/predeploy"
 	"github.com/ava-labs/subnet-evm/trie"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -57,7 +58,7 @@ func NewFullFaker() *DummyEngine {
 	}
 }
 
-func (self *DummyEngine) verifyHeaderGasFields(config *params.ChainConfig, header *types.Header, parent *types.Header) error {
+func (self *DummyEngine) verifyHeaderGasFields(chain consensus.ChainHeaderReader, config *params.ChainConfig, header *types.Header, parent *types.Header) error {
 	timestamp := new(big.Int).SetUint64(header.Time)
 
 	// Verify that the gas limit is <= 2^63-1
@@ -68,23 +69,20 @@ func (self *DummyEngine) verifyHeaderGasFields(config *params.ChainConfig, heade
 	if header.GasUsed > header.GasLimit {
 		return fmt.Errorf("invalid gasUsed: have %d, gasLimit %d", header.GasUsed, header.GasLimit)
 	}
-	if config.IsSubnetEVM(timestamp) {
-		expectedGasLimit := config.GetFeeConfig().GasLimit.Uint64()
+
+	if config.IsSwimmerPhase0(timestamp) {
+		preContract := &predeploy.PredeployContract{}
+		parentState, err := chain.StateAt(parent.Root)
+		if err != nil {
+			return fmt.Errorf("parent block not found, block hash: %d", parent.Hash())
+		}
+
+		expectedGasLimit := preContract.GetGasLimit(parentState).Uint64()
 		if header.GasLimit != expectedGasLimit {
 			return fmt.Errorf("expected gas limit to be %d, but found %d", expectedGasLimit, header.GasLimit)
 		}
-	} else {
-		// Verify that the gas limit remains within allowed bounds
-		diff := int64(parent.GasLimit) - int64(header.GasLimit)
-		if diff < 0 {
-			diff *= -1
-		}
-		limit := parent.GasLimit / params.GasLimitBoundDivisor
 
-		if uint64(diff) >= limit || header.GasLimit < params.MinGasLimit {
-			return fmt.Errorf("invalid gas limit: have %d, want %d += %d", header.GasLimit, parent.GasLimit, limit)
-		}
-		// Verify BaseFee is not present before Subnet EVM
+		// Verify BaseFee is not present in Swimmer Phase 0
 		if header.BaseFee != nil {
 			return fmt.Errorf("invalid baseFee before fork: have %d, want <nil>", header.BaseFee)
 		}
@@ -92,6 +90,32 @@ func (self *DummyEngine) verifyHeaderGasFields(config *params.ChainConfig, heade
 			return fmt.Errorf("invalid blockGasCost before fork: have %d, want <nil>", header.BlockGasCost)
 		}
 		return nil
+	} else {
+		if config.IsSubnetEVM(timestamp) {
+			expectedGasLimit := config.GetFeeConfig().GasLimit.Uint64()
+			if header.GasLimit != expectedGasLimit {
+				return fmt.Errorf("expected gas limit to be %d, but found %d", expectedGasLimit, header.GasLimit)
+			}
+		} else {
+			// Verify that the gas limit remains within allowed bounds
+			diff := int64(parent.GasLimit) - int64(header.GasLimit)
+			if diff < 0 {
+				diff *= -1
+			}
+			limit := parent.GasLimit / params.GasLimitBoundDivisor
+
+			if uint64(diff) >= limit || header.GasLimit < params.MinGasLimit {
+				return fmt.Errorf("invalid gas limit: have %d, want %d += %d", header.GasLimit, parent.GasLimit, limit)
+			}
+			// Verify BaseFee is not present before Subnet EVM
+			if header.BaseFee != nil {
+				return fmt.Errorf("invalid baseFee before fork: have %d, want <nil>", header.BaseFee)
+			}
+			if header.BlockGasCost != nil {
+				return fmt.Errorf("invalid blockGasCost before fork: have %d, want <nil>", header.BlockGasCost)
+			}
+			return nil
+		}
 	}
 
 	// Verify baseFee and rollupWindow encoding as part of header verification
@@ -161,7 +185,7 @@ func (self *DummyEngine) verifyHeader(chain consensus.ChainHeaderReader, header 
 		}
 	}
 	// Ensure gas-related header fields are correct
-	if err := self.verifyHeaderGasFields(config, header, parent); err != nil {
+	if err := self.verifyHeaderGasFields(chain, config, header, parent); err != nil {
 		return err
 	}
 	// Verify the header's timestamp
@@ -265,6 +289,12 @@ func (self *DummyEngine) verifyBlockFee(
 }
 
 func (self *DummyEngine) Finalize(chain consensus.ChainHeaderReader, block *types.Block, parent *types.Header, state *state.StateDB, receipts []*types.Receipt) error {
+	// <<Swimmer VM>> Disable EIP-1559
+	isSwimmerPhase0 := chain.Config().IsSwimmerPhase0(new(big.Int).SetUint64(block.Time()))
+	if isSwimmerPhase0 {
+		return nil
+	}
+
 	if chain.Config().IsSubnetEVM(new(big.Int).SetUint64(block.Time())) {
 		blockGasCostStep := chain.Config().GetFeeConfig().BlockGasCostStep
 		targetBlockRate := chain.Config().GetFeeConfig().TargetBlockRate
@@ -296,7 +326,10 @@ func (self *DummyEngine) Finalize(chain consensus.ChainHeaderReader, block *type
 
 func (self *DummyEngine) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, parent *types.Header, state *state.StateDB, txs []*types.Transaction,
 	uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
-	if chain.Config().IsSubnetEVM(new(big.Int).SetUint64(header.Time)) {
+	// <<Swimmer VM>> Disable EIP-1559
+	isSwimmerPhase0 := chain.Config().IsSwimmerPhase0(new(big.Int).SetUint64(header.Time))
+
+	if !isSwimmerPhase0 && chain.Config().IsSubnetEVM(new(big.Int).SetUint64(header.Time)) {
 		blockGasCostStep := chain.Config().GetFeeConfig().BlockGasCostStep
 		targetBlockRate := chain.Config().GetFeeConfig().TargetBlockRate
 		minBlockGasCost := chain.Config().GetFeeConfig().MinBlockGasCost
