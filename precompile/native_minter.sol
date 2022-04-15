@@ -20,4 +20,7 @@ interface NativeMinterInterface {
 
     // Mint [amount] number of native coins and send to [addr]
     function mintNativeCoin(address addr, uint256 amount) external;
+
+    // Return total supply
+    function totalSupply() external view returns(uint256);
 }

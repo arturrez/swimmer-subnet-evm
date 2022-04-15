@@ -43,6 +43,7 @@ import (
 	"github.com/ava-labs/subnet-evm/core/state"
 	"github.com/ava-labs/subnet-evm/core/types"
 	"github.com/ava-labs/subnet-evm/params"
+	"github.com/ava-labs/subnet-evm/predeploy"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -121,15 +122,23 @@ func (w *worker) commitNewWork() (*types.Block, error) {
 	}
 
 	var gasLimit uint64
-	configuredGasLimit := w.chainConfig.GetFeeConfig().GasLimit.Uint64()
-	if w.chainConfig.IsSubnetEVM(big.NewInt(timestamp)) {
-		gasLimit = configuredGasLimit
+	if w.chainConfig.IsSwimmerPhase0(big.NewInt(timestamp)) {
+		preContract := &predeploy.PredeployContract{}
+		parentState, err := w.chain.StateAt(parent.Root())
+		if err != nil {
+			return nil, fmt.Errorf("parent block not found, block hash: %d", parent.Hash())
+		}
+		gasLimit = preContract.GetGasLimit(parentState).Uint64()
 	} else {
-		// The gas limit is set in SubnetEVMGasLimit because the ceiling and floor were set to the same value
-		// such that the gas limit converged to it. Since this is hardbaked now, we remove the ability to configure it.
-		gasLimit = core.CalcGasLimit(parent.GasUsed(), parent.GasLimit(), configuredGasLimit, configuredGasLimit)
+		configuredGasLimit := w.chainConfig.GetFeeConfig().GasLimit.Uint64()
+		if w.chainConfig.IsSubnetEVM(big.NewInt(timestamp)) {
+			gasLimit = configuredGasLimit
+		} else {
+			// The gas limit is set in SubnetEVMGasLimit because the ceiling and floor were set to the same value
+			// such that the gas limit converged to it. Since this is hardbaked now, we remove the ability to configure it.
+			gasLimit = core.CalcGasLimit(parent.GasUsed(), parent.GasLimit(), configuredGasLimit, configuredGasLimit)
+		}
 	}
-
 	num := parent.Number()
 
 	header := &types.Header{
@@ -164,8 +173,12 @@ func (w *worker) commitNewWork() (*types.Block, error) {
 	// Configure any stateful precompiles that should go into effect during this block.
 	w.chainConfig.CheckConfigurePrecompiles(new(big.Int).SetUint64(parent.Time()), bigTimestamp, env.state)
 
+	enforceTips := true
+	if w.chainConfig.IsSwimmerPhase0(bigTimestamp) {
+		enforceTips = false
+	}
 	// Fill the block with all available pending transactions.
-	pending := w.eth.TxPool().Pending(true)
+	pending := w.eth.TxPool().Pending(enforceTips)
 
 	// Split the pending transactions into locals and remotes
 	localTxs := make(map[common.Address]types.Transactions)
@@ -176,13 +189,25 @@ func (w *worker) commitNewWork() (*types.Block, error) {
 			localTxs[account] = txs
 		}
 	}
-	if len(localTxs) > 0 {
-		txs := types.NewTransactionsByPriceAndNonce(env.signer, localTxs, header.BaseFee)
-		w.commitTransactions(env, txs, w.coinbase)
-	}
-	if len(remoteTxs) > 0 {
-		txs := types.NewTransactionsByPriceAndNonce(env.signer, remoteTxs, header.BaseFee)
-		w.commitTransactions(env, txs, w.coinbase)
+
+	if w.chainConfig.IsSwimmerPhase0(bigTimestamp) {
+		if len(localTxs) > 0 {
+			txs := types.NewTransactionsByTimeAndNonce(env.signer, localTxs, header.BaseFee)
+			w.commitTransactionsByTime(env, txs, w.coinbase)
+		}
+		if len(remoteTxs) > 0 {
+			txs := types.NewTransactionsByTimeAndNonce(env.signer, remoteTxs, header.BaseFee)
+			w.commitTransactionsByTime(env, txs, w.coinbase)
+		}
+	} else {
+		if len(localTxs) > 0 {
+			txs := types.NewTransactionsByPriceAndNonce(env.signer, localTxs, header.BaseFee)
+			w.commitTransactions(env, txs, w.coinbase)
+		}
+		if len(remoteTxs) > 0 {
+			txs := types.NewTransactionsByPriceAndNonce(env.signer, remoteTxs, header.BaseFee)
+			w.commitTransactions(env, txs, w.coinbase)
+		}
 	}
 
 	return w.commit(env)
@@ -208,6 +233,7 @@ func (w *worker) commitTransaction(env *environment, tx *types.Transaction, coin
 	snap := env.state.Snapshot()
 
 	receipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &coinbase, env.gasPool, env.state, env.header, tx, &env.header.GasUsed, *w.chain.GetVMConfig())
+
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
 		return nil, err
@@ -219,6 +245,69 @@ func (w *worker) commitTransaction(env *environment, tx *types.Transaction, coin
 }
 
 func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByPriceAndNonce, coinbase common.Address) {
+	for {
+		// If we don't have enough gas for any further transactions then we're done
+		if env.gasPool.Gas() < params.TxGas {
+			log.Trace("Not enough gas for further transactions", "have", env.gasPool, "want", params.TxGas)
+			break
+		}
+		// Retrieve the next transaction and abort if all done
+		tx := txs.Peek()
+		if tx == nil {
+			break
+		}
+		// Error may be ignored here. The error has already been checked
+		// during transaction acceptance is the transaction pool.
+		//
+		// We use the eip155 signer regardless of the current hf.
+		from, _ := types.Sender(env.signer, tx)
+		// Check whether the tx is replay protected. If we're not in the EIP155 hf
+		// phase, start ignoring the sender until we do.
+		if tx.Protected() && !w.chainConfig.IsEIP155(env.header.Number) {
+			log.Trace("Ignoring reply protected transaction", "hash", tx.Hash(), "eip155", w.chainConfig.EIP155Block)
+
+			txs.Pop()
+			continue
+		}
+		// Start executing the transaction
+		env.state.Prepare(tx.Hash(), env.tcount)
+
+		_, err := w.commitTransaction(env, tx, coinbase)
+		switch {
+		case errors.Is(err, core.ErrGasLimitReached):
+			// Pop the current out-of-gas transaction without shifting in the next from the account
+			log.Trace("Gas limit exceeded for current block", "sender", from)
+			txs.Pop()
+
+		case errors.Is(err, core.ErrNonceTooLow):
+			// New head notification data race between the transaction pool and miner, shift
+			log.Trace("Skipping transaction with low nonce", "sender", from, "nonce", tx.Nonce())
+			txs.Shift()
+
+		case errors.Is(err, core.ErrNonceTooHigh):
+			// Reorg notification data race between the transaction pool and miner, skip account =
+			log.Trace("Skipping account with high nonce", "sender", from, "nonce", tx.Nonce())
+			txs.Pop()
+
+		case errors.Is(err, nil):
+			env.tcount++
+			txs.Shift()
+
+		case errors.Is(err, core.ErrTxTypeNotSupported):
+			// Pop the unsupported transaction without shifting in the next from the account
+			log.Trace("Skipping unsupported transaction type", "sender", from, "type", tx.Type())
+			txs.Pop()
+
+		default:
+			// Strange error, discard the transaction and get the next in line (note, the
+			// nonce-too-high clause will prevent us from executing in vain).
+			log.Debug("Transaction failed, account skipped", "hash", tx.Hash(), "err", err)
+			txs.Shift()
+		}
+	}
+}
+
+func (w *worker) commitTransactionsByTime(env *environment, txs *types.TransactionsByTimeAndNonce, coinbase common.Address) {
 	for {
 		// If we don't have enough gas for any further transactions then we're done
 		if env.gasPool.Gas() < params.TxGas {

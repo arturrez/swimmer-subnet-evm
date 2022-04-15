@@ -69,11 +69,17 @@ func NewPublicEthereumAPI(b Backend) *PublicEthereumAPI {
 
 // GasPrice returns a suggestion for a gas price for legacy transactions.
 func (s *PublicEthereumAPI) GasPrice(ctx context.Context) (*hexutil.Big, error) {
-	gasPrice, err := s.b.SuggestPrice(ctx)
-	if err != nil {
-		return nil, err
+	isSwimmerPhase0 := s.b.ChainConfig().IsSwimmerPhase0(new(big.Int).SetUint64(s.b.CurrentBlock().Time()))
+
+	if !isSwimmerPhase0 {
+		gasPrice, err := s.b.SuggestPrice(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return (*hexutil.Big)(gasPrice), err
 	}
-	return (*hexutil.Big)(gasPrice), err
+	gasPrice := s.b.GetFixedGasPrice()
+	return (*hexutil.Big)(gasPrice), nil
 }
 
 // BaseFee returns an estimate for what the base fee will be on the next block if
@@ -1660,16 +1666,18 @@ func (s *PublicTransactionPoolAPI) GetTransactionReceipt(ctx context.Context, ha
 		"type":              hexutil.Uint(tx.Type()),
 	}
 	// Assign the effective gas price paid
-	if !s.b.ChainConfig().IsSubnetEVM(timestamp) {
-		fields["effectiveGasPrice"] = hexutil.Uint64(tx.GasPrice().Uint64())
-	} else {
+	// <<Swimmer VM>> Disable EIP-1559
+	if !s.b.ChainConfig().IsSwimmerPhase0(timestamp) && s.b.ChainConfig().IsSubnetEVM(timestamp) {
 		header, err := s.b.HeaderByHash(ctx, blockHash)
 		if err != nil {
 			return nil, err
 		}
 		gasPrice := new(big.Int).Add(header.BaseFee, tx.EffectiveGasTipValue(header.BaseFee))
 		fields["effectiveGasPrice"] = hexutil.Uint64(gasPrice.Uint64())
+	} else {
+		fields["effectiveGasPrice"] = hexutil.Uint64(tx.GasPrice().Uint64())
 	}
+
 	// Assign receipt status or post state.
 	if len(receipt.PostState) > 0 {
 		fields["root"] = hexutil.Bytes(receipt.PostState)

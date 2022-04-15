@@ -117,6 +117,8 @@ type Config struct {
 
 	// VM2VM network
 	MaxOutboundActiveRequests int64 `json:"max-outbound-active-requests"`
+
+	ValidatorAddress string `json:"validator-address"`
 }
 
 // EthAPIs returns an array of strings representing the Eth APIs that should be enabled

@@ -23,6 +23,12 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header, timestamp uin
 	// return the initial slice and initial base fee.
 	isSubnetEVM := config.IsSubnetEVM(new(big.Int).SetUint64(parent.Time))
 	extraDataSize := params.ExtraDataSize
+	isSwimmerPhase0 := config.IsSwimmerPhase0(new(big.Int).SetUint64(parent.Time))
+	// <<Swimmer VM>> Disable EIP-1559
+	if isSwimmerPhase0 {
+		initialSlice := make([]byte, extraDataSize)
+		return initialSlice, nil, nil
+	}
 
 	if !isSubnetEVM || parent.Number.Cmp(common.Big0) == 0 {
 		initialSlice := make([]byte, extraDataSize)
