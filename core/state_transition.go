@@ -33,7 +33,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ava-labs/subnet-evm/core/types"
 	"github.com/ava-labs/subnet-evm/core/vm"
@@ -235,7 +234,6 @@ func (st *StateTransition) buyGas() error {
 
 			contractCreation := st.msg.To() == nil
 			if !contractCreation && st.msg.GasPrice().Cmp(new(big.Int).SetUint64(0)) == 0 {
-				log.Info("contractCreation 1", "feeCheck", feeCheck, "balanceCheck", balanceCheck)
 				to := *st.msg.To()
 				isWhitelistedUser := preContract.IsWhitelistedUser(st.state, to, st.msg.From())
 				isWhitelistedFunc := preContract.IsWhitelistedFunc(st.state, to, st.msg.Data()[:4])
@@ -262,7 +260,6 @@ func (st *StateTransition) buyGas() error {
 				// 	balanceCheck.Add(balanceCheck, st.value)
 				// }
 
-				log.Info("contractCreation 2", "feeCheck", feeCheck, "balanceCheck", balanceCheck, "st.gasFeeCap", st.gasFeeCap)
 				if have, want := st.state.GetBalance(st.msg.From()), balanceCheck; have.Cmp(want) < 0 {
 					return fmt.Errorf("%w: from address %v have %v want %v", ErrInsufficientFunds,
 						st.msg.From(), have, want)
