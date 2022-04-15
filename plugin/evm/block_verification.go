@@ -12,6 +12,7 @@ import (
 	"github.com/ava-labs/subnet-evm/constants"
 	"github.com/ava-labs/subnet-evm/core/types"
 	"github.com/ava-labs/subnet-evm/params"
+	"github.com/ava-labs/subnet-evm/predeploy"
 	"github.com/ava-labs/subnet-evm/trie"
 )
 
@@ -243,11 +244,18 @@ func (blockValidatorSwimmerPhase0) SyntacticVerify(b *Block) error {
 			ethHeader.Nonce.Uint64(), errInvalidNonce,
 		)
 	}
-	// TODO: get gasLimit from the contract
-	expectedGas := b.vm.chainConfig.GetFeeConfig().GasLimit.Uint64()
-	if ethHeader.GasLimit != expectedGas {
+
+	currentState, err := b.vm.chain.CurrentState()
+	if err != nil {
 		return fmt.Errorf(
-			"expected gas limit to be %d in subnetEVM but got %d",
+			"can not read current state: %w", err,
+		)
+	}
+	preContract := &predeploy.PredeployContract{}
+	expectedGas := preContract.GetGasLimit(currentState)
+	if ethHeader.GasLimit != expectedGas.Uint64() {
+		return fmt.Errorf(
+			"expected gas limit to be %d in Swimmer VM but got %d",
 			expectedGas, ethHeader.GasLimit,
 		)
 	}
