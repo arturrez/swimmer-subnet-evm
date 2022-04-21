@@ -245,14 +245,14 @@ func (blockValidatorSwimmerPhase0) SyntacticVerify(b *Block) error {
 		)
 	}
 
-	currentState, err := b.vm.chain.CurrentState()
+	blockState, err := b.vm.chain.BlockState(b.ethBlock)
 	if err != nil {
 		return fmt.Errorf(
-			"can not read current state: %w", err,
+			"can not read current block state: %w", err,
 		)
 	}
 	preContract := &predeploy.PredeployContract{}
-	expectedGas := preContract.GetGasLimit(currentState)
+	expectedGas := preContract.GetGasLimit(blockState)
 	if ethHeader.GasLimit != expectedGas.Uint64() {
 		return fmt.Errorf(
 			"expected gas limit to be %d in Swimmer VM but got %d",
