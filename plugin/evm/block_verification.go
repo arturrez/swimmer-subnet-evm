@@ -12,7 +12,6 @@ import (
 	"github.com/ava-labs/subnet-evm/constants"
 	"github.com/ava-labs/subnet-evm/core/types"
 	"github.com/ava-labs/subnet-evm/params"
-	"github.com/ava-labs/subnet-evm/predeploy"
 	"github.com/ava-labs/subnet-evm/trie"
 )
 
@@ -245,20 +244,22 @@ func (blockValidatorSwimmerPhase0) SyntacticVerify(b *Block) error {
 		)
 	}
 
-	blockState, err := b.vm.chain.BlockState(b.ethBlock)
-	if err != nil {
-		return fmt.Errorf(
-			"can not read current block state: %w", err,
-		)
-	}
-	preContract := &predeploy.PredeployContract{}
-	expectedGas := preContract.GetGasLimit(blockState)
-	if ethHeader.GasLimit != expectedGas.Uint64() {
-		return fmt.Errorf(
-			"expected gas limit to be %d in Swimmer VM but got %d",
-			expectedGas, ethHeader.GasLimit,
-		)
-	}
+	// Remove verify block limit (stateful) in syntacticVerify
+	// blockState, err := b.vm.chain.BlockState(b.ethBlock)
+	// if err != nil {
+	// 	return fmt.Errorf(
+	// 		"can not read current block state: %w", err,
+	// 	)
+	// }
+	// preContract := &predeploy.PredeployContract{}
+	// expectedGas := preContract.GetGasLimit(blockState)
+	// if ethHeader.GasLimit != expectedGas.Uint64() {
+	// 	return fmt.Errorf(
+	// 		"expected gas limit to be %d in Swimmer VM but got %d",
+	// 		expectedGas, ethHeader.GasLimit,
+	// 	)
+	// }
+
 	if ethHeader.MixDigest != (common.Hash{}) {
 		return fmt.Errorf(
 			"expected MixDigest to be empty but got %x: %w",
