@@ -51,4 +51,4 @@ swimmer_id=srSGD5JeYhL8GLx4RUw53VN5TcoBbax6EeCYmy5S3DiteJhdF
 
 # Build Subnet EVM, which is run as a subprocess
 echo "Building Subnet EVM Version: $subnet_evm_version $swimmer_version; GitCommit: $subnet_evm_commit"
-go build -ldflags "-X github.com/ava-labs/subnet-evm/plugin/evm.GitCommit=$subnet_evm_commit -X github.com/ava-labs/subnet-evm/plugin/evm.Version=$subnet_evm_version-$swimmer_version $static_ld_flags" -o "$binary_path/$swimmer_id" "plugin/"*.go
+go build -ldflags "-X github.com/ava-labs/subnet-evm/plugin/evm.GitCommit=$subnet_evm_commit -X github.com/ava-labs/subnet-evm/plugin/evm.Version=$subnet_evm_version-$swimmer_version $static_ld_flags" -o "$binary_path" "plugin/"*.go
